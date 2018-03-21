@@ -1,0 +1,61 @@
+// GSP 참조
+
+// 서버 구동의 큰 흐름
+// 1. WSAStartup
+WSADATA wsa;
+if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
+    return false;
+
+// 2. WSASocket, ListenSocket 배정 (TCP 소켓 생성)
+mListenSocket = WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_OVERLAPPED);
+if (mListenSocket == INVALID_SOCKET)
+    return false;
+
+// 3. setsockopt, 소켓의 옵션을 설정
+// SO_REUSEADDR : 소켓을 재사용 할 수 있도록 함
+int opt = 1;
+setsockopt(mListenSocket, SOL_SOCKET, SO_REUSEADDR, (const char*)&opt, sizeof(int));
+
+// 4. Bind, 소켓에 ip, port 등 필요한 정보를 배정함
+// 해당 정보들은 SOCKADDR_IN 구조체에 넣는다
+SOCKADDR_IN serveraddr;
+ZeroMemory(&serveraddr, sizeof(serveraddr));
+serveraddr.sin_family = AF_INET;
+serveraddr.sin_port = htons(LISTEN_PORT);
+serveraddr.sin_addr.s_addr = htonl(INADDR_ANY);
+
+if (SOCKET_ERROR == bind(mListenSocket, (SOCKADDR*)&serveraddr, sizeof(serveraddr)))
+    return false;
+
+// 5. Listen
+if (SOCKET_ERROR == listen(mListenSocket, SOMAXCONN))
+{
+    printf_s("[DEBUG] listen error\n");
+    return;
+}
+
+
+// IOCP 를 위한 사전 작업
+// 1. IOCP 에 사용할 스레드 갯수 설정
+SYSTEM_INFO si;
+GetSystemInfo(&si);
+mIoThreadCount = si.dwNumberOfProcessors;
+
+// 2. IOCP 핸들 생성
+mCompletionPort = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0);
+if (mCompletionPort == NULL)
+    return false;
+
+// 3. 기존 파일에 IOCP 핸들을 연결
+// 완료 통지를 위한걸로 보임
+HANDLE handle = CreateIoCompletionPort((HANDLE)mListenSocket, mCompletionPort, 0, 0);
+
+// 4. IOCP 스레드 생성
+// IOCP 스레드에 사용할 함수를 꼭 만들어둘 것
+for (int i = 0; i < mIoThreadCount; ++i)
+{
+    DWORD dwThreadId;
+    HANDLE hThread = (HANDLE)_beginthreadex(NULL, 0, IoWorkerThread, (LPVOID)(i+1), 0, (unsigned int*)&dwThreadId);
+    if (hThread == NULL)
+        return false;
+}
