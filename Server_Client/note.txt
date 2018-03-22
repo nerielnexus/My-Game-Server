@@ -59,3 +59,147 @@ for (int i = 0; i < mIoThreadCount; ++i)
     if (hThread == NULL)
         return false;
 }
+
+/*------------------------ 180322 ------------------------*/
+// AcceptEx
+// 비동기적 소켓 연결을 위한 함수
+// 사용하기 위해, mswsock.h 의 AcceptEx 함수를 런타임 중 메모리에 등록해야 한다
+// DisconnectEx 도 같은 방법으로 등록하고 사용한다.
+
+// 1. LPFN_ACCEPTEX 와 GUID 등록
+LPFN_ACCEPTEX IocpManager::lpfnAcceptEx = nullptr;
+GUID guidAcceptEx = WSAID_ACCEPTEX;
+
+// 2. WSAIoctl 함수를 통해 런타임 중 메모리에 함수 등록
+DWORD bytes = 0;
+WSAIoctl(   listenSock,                         // 소켓
+            SIO_GET_EXTENSION_FUNCTION_POINTER, // 컨트롤 코드
+            &guidAcceptEx,                      // 입력버퍼
+            SIZEOF(GUID),                       // 입력버퍼 크기
+            &lpfnAcceptEx,                      // 출력버퍼, 나중에 AcceptEx 의 함수포인터로 동작함
+            SIZEOF(LPFN_ACCEPTEX),              // 출력버퍼 크기
+            &bytes,                             // 반환값 크기
+            NULL,                               // WSAOVERLAPPED 포인터, NULL 일경우 non-overlapped 소켓으로 취급
+            NULL                                // Completion Routine 포인터, NULL 일경우 non-overlapped 소켓으로 취급
+            );
+
+// 3. WSAIoctl 로 받은 AcceptEx 의 함수포인터를 적당히 사용한다
+IocpManager::lpfnAcceptEx(/* ... */);
+BOOL IocpManager::AcceptEx(/*...*/)
+{
+    return IocpManager::lpfnAcceptEx(/*...*/);
+}
+
+// AcceptEx 의 매개변수
+BOOL AcceptEx(SOCKET sListenSocket,         // 서버 소켓
+              SOCKET sAcceptSocket,         // 클라이언트 소켓, bind/connect 되면 안됨
+              PVOID lpOutputBuffer,         // local 주소, remote 주소, 연결시 받을 첫 데이터 블록의 내용을 저장할 버퍼
+              DWORD dwReceiceDataLength,    // 버퍼에 저장되는 데이터 블록의 크기 
+              DWORD dwLocalAddressLength,   // local 주소의 길이
+              DWORD dwRemoteAddressLength,  // remote 주소의 길이
+              LPDWORD lpdwBytesReceived,    // 완료시 전달할 overlapped 구조체의 주소
+              LPOVERLAPPED lpOverlapped     // Overlapped 구조체의 포인터, NULL은 안됨
+              );
+
+// DisconnectEx 의 매개변수
+BOOL DisconnectEx(SOCKET hSocket,               // 연결되어 있는 클라이언트 소켓
+                  LPOVERLAPPED lpOverlapped,    // OVERLAPPED 구조체의 포인터, NULL 이면 안됨
+                  DWORD dwFlags,                // 소켓 사용에 대한 플래그
+                  DWORD reserved                // 무조건 0을 전달
+                  );
+
+// 특이사항
+// dwFlags : TF_REUSE_SOCKET 을 전달해서 AcceptEx, ConnectEx 에서 사용한 소켓을 재사용할 수 있다
+// reserved : 0이 아닌 다른 값을 전달하면 WSAEINVAL 오류를 반환함
+
+// IOCP Thread 에서 진행되는 작업
+// 1. 필요한 변수 선언
+LIoThreadId = reinterpret_cast<int>(lpParam);
+HANDLE hComletionPort = GIocpManager->GetComletionPort();
+
+// 2. GQCS 를 이용해 Completion Queue 에서 작업할 것을 꺼내오기
+while(true)
+{
+    int ret = GetQueuedCompletionStatus(hComletionPort,
+                                        &dwTransferred,
+                                        (PULONG_PTR)&completionKey,
+                                        (LPOVERLAPPED*)&context,
+                                        GQCS_TIMEOUT);
+}
+
+// 3. GQCS 로 불러온 작업에 대한 에러 검증
+if (ret == 0 || dwTransferred == 0)
+{
+    int gle = GetLastError();
+
+    /// check time out first 
+    if (gle == WAIT_TIMEOUT)
+        continue;
+
+    // IO_RECV, IO_SEND 인데 받은 byte가 없거나 GQCS 에서 에러를 보낸 경우
+    if (context->mIoType == IO_RECV || context->mIoType == IO_SEND )
+    {
+        CRASH_ASSERT(nullptr != theClient);
+
+        /// In most cases in here: ERROR_NETNAME_DELETED(64)
+        theClient->DisconnectRequest(DR_COMPLETION_ERROR);
+        DeleteIoContext(context);
+        continue;
+    }
+}
+
+// 4. 소켓의 종류에 따라 처리하기
+switch (context->mIoType)
+{
+case IO_DISCONNECT:
+    break;
+    /* ... */
+default:
+    break;
+}
+
+// 5. 필요할 경우 추가적인 에러 처리를 하기
+
+
+// 내 서버만의 Overlapped 구조체 정의하기
+struct OverlappedIOContext
+{
+	OverlappedIOContext(ClientSession* owner, IOType ioType);
+
+	OVERLAPPED		mOverlapped ;       // 당연히 있어야하는 Overlapped 구조체
+	ClientSession*	mSessionObject ;    // 클라이언트를 구분하기 위한 변수
+	IOType			mIoType ;           // 패킷의 종류를 구분할 IO Type
+	WSABUF			mWsaBuf;            // WSABUF
+} ;
+
+
+// 패킷 종류를 구분해보자
+// 의문점 하나
+// Q) GSP 에서는 ClientSession.h 에 정의했는데, 굳이 그럴 필요가 있을까?
+// A) 의미가 없었다, 새로 정의할 Overlapped 구조체에 클라이언트 구분에 사용할
+// ClientSession 객체의 포인터 값이 들어가더라.
+// 그렇게 구성하지 않을 생각이라면 ClientSession.h 에 정의할 필요가 없어보인다
+
+// 패킷의 1차 분류, 연결 혹은 오브젝트 패킷인지 구분한다
+enum PACKET_TYPE
+{
+    CONNECTION,
+    OBJECT_MODIFY
+}
+
+// 패킷의 2차 분류, 어떤 연결 이벤트인지 구분한다
+enum CONNECTION_EVENT
+{
+    CONNECTION,
+    DISCONNECT_USER,
+    DISCONNECTION_FORCED
+}
+
+// 패킷의 2차 분류, 어떤 오브젝트 이벤트인지 구분한다
+enum OBJECT_EVENT
+{
+    OBJECT_CREATE,
+    OBJECT_MOVE,
+    OBJECT_COLLISION,
+    OBJECT_DELETE
+}
