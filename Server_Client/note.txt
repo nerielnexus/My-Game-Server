@@ -258,3 +258,87 @@ struct PacketConnectionInfo
     short   pattern2;
     short   pattern3;
 };
+
+
+/*------------------------ 180331 ------------------------*/
+
+// 대체 completionOk 가 만들어내는 차이는 뭔가?
+// 크게 두 가지로 분류할 수 있다
+// completionOk == true 인 IO_ACCEPT, IO_DISCONNECT
+// completionOk == false 인 IO_SEND, IO_RECV 등등.
+
+bool completionOk = false;
+switch (context->mIoType)
+{
+case IO_DISCONNECT:
+    theClient->DisconnectCompletion(static_cast<OverlappedDisconnectContext*>(context)->mDisconnectReason);
+    completionOk = true;
+    break;
+
+case IO_RECV_ZERO:
+    completionOk = PreReceiveCompletion(theClient, static_cast<OverlappedPreRecvContext*>(context), dwTransferred);
+    break;
+}
+
+// completionOk == true 인 두 IO Type 은 socket 을 재활용할 필요가 없는 동작이다
+// 반대의 경우에는 socket 을 재활용할 이유가 있는 동작이더라
+
+if ( !completionOk )
+{
+    /// connection closing
+    theClient->DisconnectRequest(DR_IO_REQUEST_ERROR);
+}
+
+// 그래서 completionOk == false 인 경우에는 DisconnectRequest 함수를 추가적으로 호출하는데
+// 이 내부구조에는 TF_REUSE_SOCKET 을 옵션으로 준 DisconnectEx 를 호출하도록 구성돼있다
+// 요약하면 생긴건 정말 연결을 끊어버리게 생겼지만, 실제로는
+// socket 을 다시 사용할 수 있도록 반납하는 정도로 동작한다는 것이다
+// 이걸 알아내려고 며칠 머리썩힌 난 정말 멍청하다
+
+DeleteIoContext(context);
+
+// 물론 다 쓴 OverlappedIOContext 는 뒷정리를 해주자
+
+
+/*------------------------ 180401 ------------------------*/
+
+case IO_RECV_ZERO:
+    completionOk = PreReceiveCompletion(theClient, static_cast<OverlappedPreRecvContext*>(context), dwTransferred);
+    break;
+
+// 이 부분 이해를 완전히 잘못했다
+// PreReceiveCompletion 의 결과에 따라 에러난 경우에는 completionOk 가 false 가 되는거였어
+// completionOk == false 인 경우는 DisconnectRequest 를 해주고
+// 반대의 경우에는 context 만 지워주는 걸로
+
+bool IocpManager::ReceiveCompletion(ClientSession* client, OverlappedRecvContext* context, DWORD dwTransferred)
+{
+	client->RecvCompletion(dwTransferred);
+
+	/// echo back
+	return client->PostSend();
+}
+
+// 각 패킷 타입에 대한 completion 처리 함수를 만들어보자
+// iocp manager 에서는 overlapped io context 를 통해 들어온 client session 객체의
+// send/recv 함수를 호출한다
+// 그리고 호출된 send/recv 함수는 일을 하고 결과를 리턴하며
+// 리턴된 결과는 다시 iocp manager 로 돌아온다
+// 그리고 completion 을 수정해서 delete io context 만 할지, disconnection request 를 할지
+// 선택을 하겠지
+
+// CircularBuffer 에 대한 고찰
+// 65535 사이즈의 원형 버퍼를 생성하고, 소켓이 들고오는 데이터를 적당히 나눈 원형 버퍼에 담았다가
+// 사용하고 지우고 하는걸 하려는 모양인데.
+// 그냥 512 정도의 사이즈로 RecvCompletion 을 진행하는 동안 잠깐 사용하고
+// 해제하고 하면 조금 낭비려나? 그래도 내가 완벽하게 이해하고 설명할 수 있는 코드라는 점에서
+// 당장은 이렇게 하는게 좋을 것 같다
+// 최선은 당연히 원형버퍼 코드를 이해하고 설명할 수 있어야 하는 것
+
+/*------------------------ 180402 ------------------------*/
+
+bool acceptexRetVal = GIocpmanager->AcceptEx(GIocpmanager->GetListenSock(), clientSock, GIocpmanager->acceptBuffer,
+    0, sizeof(SOCKADDR_IN) + 16, sizeof(SOCKADDR_IN) + 16, &bytes, (LPOVERLAPPED)acceptContext);
+
+// sizeof(SOCKADDR_IN)+16 이 부분은 listen 을 통해 받을만큼의 backlog 수 만큼 AcceptEx 를 생성하는 과정이라고 한다
+// 
