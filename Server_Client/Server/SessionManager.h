@@ -19,6 +19,7 @@ private:
 
 	uint64_t currentClientCount;
 	uint64_t returnClientCount;
+	CRITICAL_SECTION cs;
 };
 
 extern SessionManager* GSessionManager;

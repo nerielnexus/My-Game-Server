@@ -30,7 +30,7 @@ public:
 	              LPOVERLAPPED lpOverlapped     // Overlapped 구조체의 포인터, NULL은 안됨
 	              );
 	*/
-	bool AcceptEx(SOCKET sListenSocket, SOCKET sAcceptSocket, PVOID lpOutputBuffer, DWORD dwReceiceDataLength,
+	BOOL AcceptEx(SOCKET sListenSocket, SOCKET sAcceptSocket, PVOID lpOutputBuffer, DWORD dwReceiceDataLength,
 		DWORD dwLocalAddressLength, DWORD dwRemoteAddressLength, LPDWORD lpdwBytesReceived, LPOVERLAPPED lpOverlapped);
 	/*
 	// DisconnectEx 의 매개변수
@@ -44,11 +44,11 @@ public:
 	// dwFlags : TF_REUSE_SOCKET 을 전달해서 AcceptEx, ConnectEx 에서 사용한 소켓을 재사용할 수 있다
 	// reserved : 0이 아닌 다른 값을 전달하면 WSAEINVAL 오류를 반환함
 	*/
-	bool DisconnectEx(SOCKET hSocket, LPOVERLAPPED lpOverlapped, DWORD dwFlags);
+	BOOL DisconnectEx(SOCKET hSocket, LPOVERLAPPED lpOverlapped, DWORD dwFlags);
 
 	HANDLE	GetIOCPHandle() const;
 	int		GetIOCPThreadCount() const;
-	SOCKET	GetListenSock() const;
+	SOCKET*	GetListenSock();
 
 	static char acceptBuffer[64];
 

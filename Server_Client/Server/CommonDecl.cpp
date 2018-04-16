@@ -1,11 +1,13 @@
 #include "stdafx.h"
 #include "CommonDecl.h"
+#include "ClientSession.h"
 
 OverlappedIOContext::OverlappedIOContext(ClientSession* owner, PACKET_TYPE ptype)
 	:owner(owner), type(ptype)
 {
 	ZeroMemory(&ovl, sizeof(OVERLAPPED));
 	ZeroMemory(&wsaBuf, sizeof(WSABUF));
+	owner->AddRef();
 }
 
 void DeleteIOContext(OverlappedIOContext* context)
@@ -14,6 +16,7 @@ void DeleteIOContext(OverlappedIOContext* context)
 		return;
 
 	//todo 만약 ReleaseRef 같은게 있다면 처리하자
+	(context->owner)->ReleaseRef();
 
 	switch (context->type)
 	{

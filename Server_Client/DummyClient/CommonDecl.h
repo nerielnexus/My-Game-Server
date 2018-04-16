@@ -1,8 +1,11 @@
 #pragma once
 
+#include "stdafx.h"
+
 #define BUFSIZE 512
-#define LISTENPORT 9000
-#define MAXCONN 3
+#define SERVERPORT 9000
+#define MAXCONN 10000
+#define SERVERIP "127.0.0.1"
 
 #include "stdafx.h"
 
@@ -93,5 +96,3 @@ struct OverlappedIOContext
 	PACKET_TYPE		type;
 	WSABUF			wsaBuf; // 이하의 structs 들을 담을 배열이 있는 구조체
 };
-
-void DeleteIOContext(OverlappedIOContext* context);

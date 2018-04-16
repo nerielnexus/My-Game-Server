@@ -1,10 +1,12 @@
 #include "stdafx.h"
 #include "ClientSession.h"
 #include "IOCPManager.h"
+#include "SessionManager.h"
 #include "CommonDecl.h"
 
 
 ClientSession::ClientSession()
+	:refCount(0),isConnected(0)
 {
 	ZeroMemory(&clientAddr, sizeof(SOCKADDR_IN));
 	clientSock = WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_OVERLAPPED);
@@ -13,19 +15,25 @@ ClientSession::ClientSession()
 
 ClientSession::~ClientSession()
 {
+
 }
 
 bool ClientSession::ConnectionAccept()
 {
 	OverlappedIOContext* acceptContext = new OverlappedIOContext(this, PACKET_TYPE::CONNECT_ACCEPT);
 	DWORD bytes = 0;
-	DWORD flags = 0;
 	acceptContext->wsaBuf.len = 0;
 	acceptContext->wsaBuf.buf = nullptr;
 
-	bool acceptexRetVal = GIocpmanager->AcceptEx(GIocpmanager->GetListenSock(), clientSock, GIocpmanager->acceptBuffer,
-		0, sizeof(SOCKADDR_IN) + 16, sizeof(SOCKADDR_IN) + 16, &bytes, (LPOVERLAPPED)acceptContext);
-	if (acceptexRetVal == false)
+	if (FALSE == GIocpmanager->AcceptEx(
+		*(GIocpmanager->GetListenSock()),
+		clientSock,
+		GIocpmanager->acceptBuffer,
+		0,
+		sizeof(SOCKADDR_IN) + 16,
+		sizeof(SOCKADDR_IN) + 16,
+		&bytes,
+		(LPOVERLAPPED)acceptContext))
 	{
 		if (WSAGetLastError() != WSA_IO_PENDING)
 		{
@@ -44,8 +52,12 @@ void ClientSession::Disconnect(PACKET_TYPE type)
 	bool retval = GIocpmanager->DisconnectEx(clientSock, (LPWSAOVERLAPPED)context, TF_REUSE_SOCKET);
 	if (retval == false)
 	{
-		DeleteIOContext(context);
-		std::cout << "[ERROR] ClientSession::Disconnext(PACKET_TYPE type) failed, error code " << GetLastError() << std::endl;
+		if (WSAGetLastError() != WSA_IO_PENDING)
+		{
+			DeleteIOContext(context);
+			std::cout << "[ERROR] ClientSession::Disconnext(PACKET_TYPE type) failed, error code " << GetLastError() << std::endl;
+
+		}
 	}
 }
 
@@ -68,7 +80,7 @@ bool ClientSession::ObjectCommunicateCompletion(PACKET_TYPE type)
 		}
 	}
 
-	PrintObjectData(context->wsaBuf.buf, context->type);
+	ObjectDataParser(context->wsaBuf.buf, context->type);
 
 	return true;
 }
@@ -108,6 +120,7 @@ void ClientSession::AcceptCompletion()
 
 		int addrlen = sizeof(SOCKADDR_IN);
 		retval = getpeername(clientSock, (SOCKADDR*)&clientAddr, &addrlen);
+		if(retval == SOCKET_ERROR)
 		{
 			std::cout << "[ERROR] getpeername failed, error code " << GetLastError() << std::endl;
 			result = false;
@@ -133,9 +146,63 @@ void ClientSession::AcceptCompletion()
 
 }
 
-void ClientSession::PrintObjectData(char* data, PACKET_TYPE type)
+// 180416 변경, PrintObjectData -> ObjectDataParser
+// context 전송 확인을 위한 테스트 함수
+void ClientSession::ObjectDataParser(char* data, PACKET_TYPE type)
 {
+	if (type == PACKET_TYPE::DISCONNECT_USER)
+	{
+		DisconnectedUserContext* duc = new DisconnectedUserContext();
+		std::cout << "[PARSING] DisconnectedUserContext" << std::endl;
+		std::cout << "[PARSING] userid : " << duc->userid << std::endl;
+		delete duc;
+		return;
+	}
 
+	if (type == PACKET_TYPE::DISCONNECT_FORCED)
+	{
+		DisconnectedForcedContext* dfc = new DisconnectedForcedContext();
+		std::cout << "[PARSING] DisconnectedForcedContext" << std::endl;
+		std::cout << "[PARSING] userid : " << dfc->userid << std::endl;
+		delete dfc;
+		return;
+	}
+
+	if (type == PACKET_TYPE::OBJECT_CREATE)
+	{
+		ObjectCreateContext* occ = new ObjectCreateContext();
+		std::cout << "[PARSING] ObjectCreateContext" << std::endl;
+		std::cout << "[PARSING] objectid : " << occ->objectid << std::endl;
+		std::cout << "[PARSING] userid : " << occ->userid << std::endl;
+		std::cout << "[PARSING] xpos : " << occ->xpos << std::endl;
+		std::cout << "[PARSING] ypos : " << occ->ypos << std::endl;
+		delete occ;
+		return;
+	}
+
+	if (type == PACKET_TYPE::OBJECT_COLLISION)
+	{
+		ObjectCollisionContext* occ = new ObjectCollisionContext();
+		std::cout << "[PARSING] ObjectCollisionContext" << std::endl;
+		std::cout << "[PARSING] main objectid : " << occ->mainobjectid << std::endl;
+		std::cout << "[PARSING] sub objectid : " << occ->subobjectid << std::endl;
+		std::cout << "[PARSING] xpos : " << occ->xpos << std::endl;
+		std::cout << "[PARSING] ypos : " << occ->ypos << std::endl;
+		delete occ;
+		return;
+	}
+
+	if (type == PACKET_TYPE::OBJECT_DELETE)
+	{
+		ObjectDeleteContext* odc = new ObjectDeleteContext();
+		std::cout << "[PARSING] ObjectDeleteContext" << std::endl;
+		std::cout << "[PARSING] objectid : " << odc->objectid << std::endl;
+		delete odc;
+		return;
+	}
+
+	std::cout << "[PARSING] ObjectDataParser failed, not a Object-Type Packet" << std::endl;
+	return;
 }
 
 void ClientSession::SessionReset()
@@ -153,4 +220,29 @@ void ClientSession::SessionReset()
 	}
 	closesocket(clientSock);
 	clientSock = WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_OVERLAPPED);
+}
+
+void ClientSession::AddRef()
+{
+	if (InterlockedIncrement(&refCount) <= 0)
+	{
+		std::cout << "[ERROR] AddRef failed" << std::endl;
+		return;
+	}
+}
+
+void ClientSession::ReleaseRef()
+{
+	long retval = InterlockedDecrement(&refCount);
+	if (retval <= 0)
+	{
+		std::cout << "[ERROR] ReleaseRef failed" << std::endl;
+		return;
+	}
+
+	if (retval == 0)
+	{
+		std::cout << "[CONSOLE] Client returned" << std::endl;
+		GSessionManager->ReturnClientSession(this);
+	}
 }

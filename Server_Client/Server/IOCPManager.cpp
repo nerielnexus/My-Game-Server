@@ -97,13 +97,13 @@ bool IOCPManager::Initialize()
 	GUID guidAcceptEx = WSAID_ACCEPTEX;
 	GUID guidDisconnectEx = WSAID_DISCONNECTEX;
 	DWORD bytes = 0;
-	if (SOCKET_ERROR == WSAIoctl(listenSock, SIO_GET_EXTENSION_FUNCTION_POINTER, &guidAcceptEx, sizeof(GUID), &lpfnAcceptEx, sizeof(LPFN_ACCEPTEX), &bytes, NULL, NULL))
+	if (SOCKET_ERROR == WSAIoctl(listenSock, SIO_GET_EXTENSION_FUNCTION_POINTER, &guidAcceptEx, sizeof(GUID), &lpfnAcceptEx, sizeof(LPFN_ACCEPTEX), &bytes, nullptr, nullptr))
 	{
 		std::cout << "[ERROR] WSAIoctl (AcceptEx) failed, " << WSAGetLastError() << std::endl;
 		return false;
 	}
 
-	if (SOCKET_ERROR == WSAIoctl(listenSock, SIO_GET_EXTENSION_FUNCTION_POINTER, &guidDisconnectEx, sizeof(GUID), &lpfnDisconnectEx, sizeof(LPFN_DISCONNECTEX), &bytes, NULL, NULL))
+	if (SOCKET_ERROR == WSAIoctl(listenSock, SIO_GET_EXTENSION_FUNCTION_POINTER, &guidDisconnectEx, sizeof(GUID), &lpfnDisconnectEx, sizeof(LPFN_DISCONNECTEX), &bytes, nullptr, nullptr))
 	{
 		std::cout << "[ERROR] WSAIoctl (AcceptEx) failed, " << WSAGetLastError() << std::endl;
 		return false;
@@ -147,6 +147,7 @@ unsigned int WINAPI IOCPManager::IocpThread(LPVOID lpParam)
 
 		int retval = GetQueuedCompletionStatus(hCompletionPort, &dwReceivedByte, (PULONG_PTR)&completionKey, (LPOVERLAPPED*)&context, INFINITE);
 		ClientSession* client = context ? context->owner : nullptr;
+			
 		
 		if (retval == 0 || dwReceivedByte == 0)
 		{
@@ -171,6 +172,7 @@ unsigned int WINAPI IOCPManager::IocpThread(LPVOID lpParam)
 				//todo 상대 클라이언트에게 비정상적 종료를 통지
 				//todo 서버 데이터 정리, 매칭 정리 등 필요한 작업을 진행
 
+				client->Disconnect(PACKET_TYPE::DISCONNECT_FORCED);
 				DeleteIOContext(context);
 				continue;
 			}
@@ -212,6 +214,7 @@ unsigned int WINAPI IOCPManager::IocpThread(LPVOID lpParam)
 		if (!completionStatus)
 		{
 			//todo Object 패킷에 문제가 생겨 completionStatus == false 인 경우 disconnectex 해주자
+			client->Disconnect(PACKET_TYPE::DISCONNECT_FORCED);
 		}
 
 		//x 다 사용한 overlapped io context 를 해제하자
@@ -221,13 +224,13 @@ unsigned int WINAPI IOCPManager::IocpThread(LPVOID lpParam)
 	return 0;
 }
 
-bool IOCPManager::AcceptEx(SOCKET sListenSocket, SOCKET sAcceptSocket, PVOID lpOutputBuffer, DWORD dwReceiceDataLength,
+BOOL IOCPManager::AcceptEx(SOCKET sListenSocket, SOCKET sAcceptSocket, PVOID lpOutputBuffer, DWORD dwReceiceDataLength,
 	DWORD dwLocalAddressLength, DWORD dwRemoteAddressLength, LPDWORD lpdwBytesReceived, LPOVERLAPPED lpOverlapped)
 {
 	return IOCPManager::lpfnAcceptEx(sListenSocket, sAcceptSocket, lpOutputBuffer, dwReceiceDataLength, dwLocalAddressLength, dwRemoteAddressLength, lpdwBytesReceived, lpOverlapped);
 }
 
-bool IOCPManager::DisconnectEx(SOCKET hSocket, LPOVERLAPPED lpOverlapped, DWORD dwFlags)
+BOOL IOCPManager::DisconnectEx(SOCKET hSocket, LPOVERLAPPED lpOverlapped, DWORD dwFlags)
 {
 	return IOCPManager::lpfnDisconnectEx(hSocket, lpOverlapped, dwFlags, 0);
 }
@@ -242,9 +245,9 @@ int IOCPManager::GetIOCPThreadCount() const
 	return this->iocpThreadCount;
 }
 
-SOCKET IOCPManager::GetListenSock() const
+SOCKET* IOCPManager::GetListenSock()
 {
-	return this->listenSock;
+	return &(this->listenSock);
 }
 
 bool IOCPManager::CompletionProcess(ClientSession* client, OverlappedIOContext* context, DWORD dwReceived)
@@ -261,6 +264,7 @@ bool IOCPManager::CompletionProcess(ClientSession* client, OverlappedIOContext* 
 
 	default:
 		//todo object 패킷이 아닌 경우 여기서 에러 처리
+		std::cout << "[ERROR] Packet Type " << context->type << " is not valid Object-Relative Packet Type" << std::endl;
 		return false;
 	}
 }

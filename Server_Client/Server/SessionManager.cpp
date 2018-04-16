@@ -6,9 +6,10 @@
 SessionManager* GSessionManager = nullptr;
 
 SessionManager::SessionManager()
-	:currentClientCount(0)
+	:currentClientCount(0), returnClientCount(0)
 {
 	CList.clear();
+	InitializeCriticalSection(&cs);
 }
 
 
@@ -28,22 +29,27 @@ void SessionManager::InitializeSession()
 
 bool SessionManager::AcceptSession()
 {
+	EnterCriticalSection(&cs);
 	while (currentClientCount - returnClientCount < MAXCONN)
 	{
 		ClientSession* newClient = CList.back();
 		CList.pop_back();
 
-		currentClientCount++;
+		++currentClientCount;
+		newClient->AddRef();
 
 		if (newClient->ConnectionAccept() == false)
 			return false;
 	}
+	LeaveCriticalSection(&cs);
 	return true;
 }
 
 void SessionManager::ReturnClientSession(ClientSession* client)
 {
+	EnterCriticalSection(&cs);
 	client->SessionReset();
 	CList.push_back(client);
-	returnClientCount++;
+	++returnClientCount;
+	LeaveCriticalSection(&cs);
 }
