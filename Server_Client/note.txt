@@ -365,3 +365,91 @@ struct OverlappedIOContext
 
 // Overlapped 구조체를 포함한 임의의 Overlapped 구조체를 구성하는 경우, 항상 구조체의 제일 최선에는
 // Overlapped 구조체가 있어야한다고...
+
+
+/*------------------------ 180415 ------------------------*/
+
+ObjectCreateContext* occ = new ObjectCreateContext();
+occ->objectid = 111;
+occ->userid = 222;
+occ->xpos = 333.333;
+occ->ypos = 444.444;
+
+OverlappedIOContext* ocovl = new OverlappedIOContext(nullptr, PACKET_TYPE::OBJECT_CREATE);
+ocovl->wsaBuf.len = sizeof(ObjectCreateContext);
+ocovl->wsaBuf.buf = new char[ocovl->wsaBuf.len];
+CopyMemory(ocovl->wsaBuf.buf, occ, sizeof(ObjectCreateContext));
+
+if (SOCKET_ERROR == WSASend(listenSocket, &ocovl->wsaBuf, 1, (LPDWORD)&dwBytes, 0, (LPWSAOVERLAPPED)ocovl, NULL))
+{
+    if (WSAGetLastError() != WSA_IO_PENDING)
+    {
+        std::cout << "[ERROR] WSASend failed, error code ";
+        ErrorMsg(GetLastError());
+        std::cout << std::endl;
+    }
+}
+
+// Overlapped 구조체를 새로이 정의했다면 WSASend 로 구조체를 보낼 때 매개변수중 LPWSAOVERLAPPED 에는
+// 멀쩡히 해당 구조체를 넣어주자
+// 괜히 ocovl->ovl 이러면서 고생하지 말자
+
+// Accept 를 하면서 IOCP Queue 에 빈 IO 작업을 하나 넣어줄 필요가 있다고 한다
+// 그래야 다음에 WSARecv 를 할 때 클라이언트에서 받아온 내용을 꺼내오고, 새로운 빈 껍데기 IO 를
+// IOCP Queue 에 넣는다고 하는 모양
+
+HANDLE hClientIOCP = CreateIoCompletionPort((HANDLE)clientSock, GIocpmanager->GetIOCPHandle(), (ULONG_PTR)this, 0);
+if (hClientIOCP != GIocpmanager->GetIOCPHandle())
+{
+    std::cout << "[ERROR] CreateIoCompletionPort failed, "; ErrorMsg(GetLastError()); std::cout << " (" << GetLastError() << ")" << std::endl;
+    result = false;
+    break;
+}
+
+// 여기서 왜 GLE 가 87 이 뜨는걸까?
+// IOCP 핸들에 연결했던 socket 을 또 연결하려고 하는 경우에 발생하는 문제라는데,
+// 여기서 하나의 의문은 왜 최대 10개의 클라이언트가 접속할 수 있게 설정해뒀는데
+// 8개의 IOCP 스레드가 1개의 클라이언트 접속에 대해 10번의 IOCP 핸들 연결을 하는지 의문이다
+
+bool ClientSession::InitializeRecv()
+{
+	OverlappedIOContext* init = new OverlappedIOContext(this, PACKET_TYPE::IO_DUMMY);
+	init->wsaBuf.buf = nullptr;
+	init->wsaBuf.len = 0;
+
+	DWORD dwBytes = 0;
+	DWORD dwFlags = 0;
+
+	if (SOCKET_ERROR == WSARecv(clientSock, &init->wsaBuf, 1, &dwBytes, (LPDWORD)&dwFlags, (LPWSAOVERLAPPED)init, NULL))
+	{
+		if (WSAGetLastError() != WSA_IO_PENDING)
+		{
+			std::cout << "[ERROR] InitializeRecv failed, "; ErrorMsg(GetLastError()); std::cout << " (" << GetLastError() << ")" << std::endl;
+			return false;
+		}
+	}
+
+	return true;
+}
+
+// Accept 를 한 후 IOCP Queue 에 더미 IO 를 넣어주는 작업에서 패킷 타입을 CONNECT_ACCEPT 로 잡았더니
+// 이 IO 에 대해서 한번 더 GQCS 가 실행되는 대 참사가 일어난 것이었다
+// 그래서 zero-recv 를 위한 IO_DUMMY 를 넣어두었고, 이제 이에 대한 RECV 를 처리해야 한다
+// 여기서 생기는 의문은 아래의 루프를 어떻게 내 패킷 구조에 맞게 나눌것이냐는거다
+
+// 내가 생각하는 문제의 루프
+// 1. 클라이언트가 connect 를 하고, 그 결과 gqcs 가 작업을 큐에서 꺼내 connect_accept 에 대한 작업을 한다
+// 2. conenct_accept 를 처리하는 과정에서 io_dummy 를 큐에 넣어둔다
+// 3. io_dummy 에 gqcs 가 반응해서 꺼내오고, 그거에 대한 처리(미구현)를 한다
+// 4. io_dummy 에 대한 처리를 하면서, 가령 모든 object 패킷을 미리 넣어둔다고 해보자
+// 5. 그럼 넣어둔 object 작업에 대해 또 gqcs 의 반응과 패킷을 꺼내고 넣는 작업을 반복할것이다
+// 6. 시발?
+
+// 패킷 구조를 재구성?
+// OverlappedIOContext
+// ConnectionIOContext : OverlappedIOContext 를 상속받은 Connection 전용
+// ObjectIOContext : OverlappedIOContext 를 상속받은 Object 전용
+
+// 한가지 중대한 문제점
+// accept -> gqcs pop accept io -> processing accept io, push dummy io
+// -> gqcs pop dummy io -> processing dummy io, push ALL THE STRUCT IO?

@@ -1,6 +1,9 @@
 #pragma once
 
 struct OverlappedIOContext;
+struct ConnectionIOContext;
+struct ObjectIOContext;
+struct DummyIOContext;
 class ClientSession;
 
 class IOCPManager
@@ -46,15 +49,17 @@ public:
 	*/
 	BOOL DisconnectEx(SOCKET hSocket, LPOVERLAPPED lpOverlapped, DWORD dwFlags);
 
-	HANDLE	GetIOCPHandle() const;
-	int		GetIOCPThreadCount() const;
+	HANDLE	GetIOCPHandle();
+	int		GetIOCPThreadCount();
 	SOCKET*	GetListenSock();
 
 	static char acceptBuffer[64];
+	
 
 private:
 	// 패킷에 대한 completion 처리 함수
-	static bool CompletionProcess(ClientSession* client, OverlappedIOContext* context, DWORD dwReceived);
+	static bool ObjectCompletion(ClientSession* client, ObjectIOContext* context, DWORD dwReceived);
+	static bool DummyCompletion(ClientSession* client, DummyIOContext* context, DWORD dwReceived);
 
 	static unsigned int WINAPI IocpThread(LPVOID lpParam);
 

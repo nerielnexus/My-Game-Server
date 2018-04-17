@@ -1,37 +1,9 @@
 #include "stdafx.h"
 #include "CommonDecl.h"
-#include "ClientSession.h"
 
-OverlappedIOContext::OverlappedIOContext(ClientSession* owner, PACKET_TYPE ptype)
-	:owner(owner), type(ptype)
+void ErrorMsg(DWORD err)
 {
-	ZeroMemory(&ovl, sizeof(OVERLAPPED));
-	ZeroMemory(&wsaBuf, sizeof(WSABUF));
-	owner->AddRef();
-}
-
-void DeleteIOContext(OverlappedIOContext* context)
-{
-	if (context == nullptr)
-		return;
-
-	//todo 만약 ReleaseRef 같은게 있다면 처리하자
-	(context->owner)->ReleaseRef();
-
-	switch (context->type)
-	{
-	case PACKET_TYPE::CONNECT_ACCEPT:
-	case PACKET_TYPE::DISCONNECT_USER:
-	case PACKET_TYPE::DISCONNECT_FORCED:
-	case PACKET_TYPE::OBJECT_CREATE:
-	case PACKET_TYPE::OBJECT_MOVE:
-	case PACKET_TYPE::OBJECT_COLLISION:
-	case PACKET_TYPE::OBJECT_DELETE:
-		delete context;
-		break;
-
-	default:
-		//todo 이상한 패킷 타입의 경우 에러 처리
-		break;
-	}
+	TCHAR* s = 0;
+	FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_ALLOCATE_BUFFER, 0, err, 0, (TCHAR*)&s, 0, 0);
+	std::cout << s << std::endl;
 }

@@ -6,6 +6,7 @@
 
 IOCPManager* GIocpmanager = nullptr;
 char IOCPManager::acceptBuffer[64] = { 0, };
+CRITICAL_SECTION cs;
 
 IOCPManager::IOCPManager()
 {
@@ -14,6 +15,7 @@ IOCPManager::IOCPManager()
 	iocpThreadCount		= 0;
 	lpfnAcceptEx		= nullptr;
 	lpfnDisconnectEx	= nullptr;
+	InitializeCriticalSection(&cs);
 }
 
 
@@ -26,14 +28,14 @@ bool IOCPManager::Initialize()
 	WSADATA wsa;
 	if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
 	{
-		std::cout << "[ERROR] WSAStartup failed" << std::endl;
+		std::cout << "[ERROR] IOCPManager::Initialize() WSAStartup failed" << std::endl;
 		return false;
 	}
 
 	listenSock = WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_OVERLAPPED);
 	if (listenSock == INVALID_SOCKET)
 	{
-		std::cout << "[ERROR] WSASocket failed" << std::endl;
+		std::cout << "[ERROR] IOCPManager::Initialize() WSASocket failed" << std::endl;
 		return false;
 	}
 
@@ -41,7 +43,7 @@ bool IOCPManager::Initialize()
 	int retval = setsockopt(listenSock, SOL_SOCKET, SO_REUSEADDR, (const char*)&opt, sizeof(int));
 	if (retval != 0)
 	{
-		std::cout << "[ERROR] setsockopt failed, " << WSAGetLastError() << std::endl;
+		std::cout << "[ERROR] IOCPManager::Initialize() setsockopt failed, " << WSAGetLastError() << std::endl;
 		return false;
 	}
 
@@ -54,7 +56,7 @@ bool IOCPManager::Initialize()
 	retval = bind(listenSock, (SOCKADDR*)&serverAddr, sizeof(serverAddr));
 	if (retval != 0)
 	{
-		std::cout << "[ERROR] bind failed, " << WSAGetLastError() << std::endl;
+		std::cout << "[ERROR] IOCPManager::Initialize() bind failed, " << WSAGetLastError() << std::endl;
 		return false;
 	}
 
@@ -65,14 +67,14 @@ bool IOCPManager::Initialize()
 	hIocpHandle = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0);
 	if (hIocpHandle == nullptr)
 	{
-		std::cout << "[ERROR] CreateIoCompletionPort failed" << std::endl;
+		std::cout << "[ERROR] IOCPManager::Initialize() CreateIoCompletionPort failed" << std::endl;
 		return false;
 	}
 
 	HANDLE connectionHandle = CreateIoCompletionPort((HANDLE)listenSock, hIocpHandle, 0, 0);
 	if (connectionHandle == nullptr)
 	{
-		std::cout << "[ERROR] CreateCompletionPort (create connection between IOCP & listenSock) failed" << std::endl;
+		std::cout << "[ERROR] IOCPManager::Initialize() CreateCompletionPort (create connection between IOCP & listenSock) failed" << std::endl;
 		return false;
 	}
 
@@ -89,7 +91,7 @@ bool IOCPManager::Initialize()
 
 		if (hThread == NULL)
 		{
-			std::cout << "[ERROR] _beginthreadex failed" << std::endl;
+			std::cout << "[ERROR] IOCPManager::Initialize() _beginthreadex failed" << std::endl;
 			return false;
 		}
 	}
@@ -99,13 +101,13 @@ bool IOCPManager::Initialize()
 	DWORD bytes = 0;
 	if (SOCKET_ERROR == WSAIoctl(listenSock, SIO_GET_EXTENSION_FUNCTION_POINTER, &guidAcceptEx, sizeof(GUID), &lpfnAcceptEx, sizeof(LPFN_ACCEPTEX), &bytes, nullptr, nullptr))
 	{
-		std::cout << "[ERROR] WSAIoctl (AcceptEx) failed, " << WSAGetLastError() << std::endl;
+		std::cout << "[ERROR] IOCPManager::Initialize() WSAIoctl (AcceptEx) failed, " << WSAGetLastError() << std::endl;
 		return false;
 	}
 
 	if (SOCKET_ERROR == WSAIoctl(listenSock, SIO_GET_EXTENSION_FUNCTION_POINTER, &guidDisconnectEx, sizeof(GUID), &lpfnDisconnectEx, sizeof(LPFN_DISCONNECTEX), &bytes, nullptr, nullptr))
 	{
-		std::cout << "[ERROR] WSAIoctl (AcceptEx) failed, " << WSAGetLastError() << std::endl;
+		std::cout << "[ERROR] IOCPManager::Initialize() WSAIoctl (DisconnectEx) failed, " << WSAGetLastError() << std::endl;
 		return false;
 	}
 
@@ -118,7 +120,7 @@ void IOCPManager::StartAcceptLoop()
 {
 	if (SOCKET_ERROR == listen(listenSock, SOMAXCONN))
 	{
-		std::cout << "[ERROR] listen failed" << std::endl;
+		std::cout << "[ERROR] IOCPManager::StartAcceptLoop() listen failed" << std::endl;
 		return;
 	}
 
@@ -137,6 +139,7 @@ void IOCPManager::Finalize()
 unsigned int WINAPI IOCPManager::IocpThread(LPVOID lpParam)
 {
 	//? lpParam 을 통해 들어온 dwThreadId 를 처리할 방법이 필요해보인다
+	DWORD dwThreadId = reinterpret_cast<DWORD>(lpParam);
 	HANDLE hCompletionPort = GIocpmanager->GetIOCPHandle();
 
 	while (true)
@@ -147,7 +150,6 @@ unsigned int WINAPI IOCPManager::IocpThread(LPVOID lpParam)
 
 		int retval = GetQueuedCompletionStatus(hCompletionPort, &dwReceivedByte, (PULONG_PTR)&completionKey, (LPOVERLAPPED*)&context, INFINITE);
 		ClientSession* client = context ? context->owner : nullptr;
-			
 		
 		if (retval == 0 || dwReceivedByte == 0)
 		{
@@ -156,7 +158,7 @@ unsigned int WINAPI IOCPManager::IocpThread(LPVOID lpParam)
 
 			if (context == nullptr)
 			{
-				std::cout << "[ERROR] GQCS failed (LPOVERVALLED* is nullptr), error code " << GetLastError() << std::endl;
+				std::cout << "[ERROR] GQCS failed (LPOVERVALLED* is nullptr), "; ErrorMsg(GetLastError()); std::cout << " (" << GetLastError() << ")" << std::endl;
 				system("pause");
 			}
 
@@ -172,10 +174,17 @@ unsigned int WINAPI IOCPManager::IocpThread(LPVOID lpParam)
 				//todo 상대 클라이언트에게 비정상적 종료를 통지
 				//todo 서버 데이터 정리, 매칭 정리 등 필요한 작업을 진행
 
-				client->Disconnect(PACKET_TYPE::DISCONNECT_FORCED);
+				client->DisconnectClient(PACKET_TYPE::DISCONNECT_FORCED);
 				DeleteIOContext(context);
+				std::cout << "[CONSOLE] object packet deleted" << std::endl;
 				continue;
 			}
+		}
+
+		if (client == nullptr)
+		{
+			std::cout << "[ERROR] client is nullptr" << std::endl;
+			return -1;
 		}
 
 		//todo 잘 들어온 패킷에 대한 처리를 하자.
@@ -202,7 +211,11 @@ unsigned int WINAPI IOCPManager::IocpThread(LPVOID lpParam)
 		case PACKET_TYPE::OBJECT_COLLISION:
 		case PACKET_TYPE::OBJECT_DELETE:
 			//x 오브젝트 패킷을 처리하고, 그 결과값 (bool) 을 completionStatus 에 넣는 구문 작성하기
-			completionStatus = CompletionProcess(client, context, dwReceivedByte);
+			completionStatus = ObjectCompletion(client, static_cast<ObjectIOContext*>(context), dwReceivedByte);
+			break;
+
+		case PACKET_TYPE::IO_DUMMY:
+			completionStatus = DummyCompletion(client, static_cast<DummyIOContext*>(context), dwReceivedByte);
 			break;
 
 		default:
@@ -214,7 +227,7 @@ unsigned int WINAPI IOCPManager::IocpThread(LPVOID lpParam)
 		if (!completionStatus)
 		{
 			//todo Object 패킷에 문제가 생겨 completionStatus == false 인 경우 disconnectex 해주자
-			client->Disconnect(PACKET_TYPE::DISCONNECT_FORCED);
+			client->DisconnectClient(PACKET_TYPE::DISCONNECT_FORCED);
 		}
 
 		//x 다 사용한 overlapped io context 를 해제하자
@@ -235,12 +248,12 @@ BOOL IOCPManager::DisconnectEx(SOCKET hSocket, LPOVERLAPPED lpOverlapped, DWORD 
 	return IOCPManager::lpfnDisconnectEx(hSocket, lpOverlapped, dwFlags, 0);
 }
 
-HANDLE IOCPManager::GetIOCPHandle() const
+HANDLE IOCPManager::GetIOCPHandle()
 {
 	return this->hIocpHandle;
 }
 
-int IOCPManager::GetIOCPThreadCount() const
+int IOCPManager::GetIOCPThreadCount()
 {
 	return this->iocpThreadCount;
 }
@@ -250,21 +263,12 @@ SOCKET* IOCPManager::GetListenSock()
 	return &(this->listenSock);
 }
 
-bool IOCPManager::CompletionProcess(ClientSession* client, OverlappedIOContext* context, DWORD dwReceived)
+bool IOCPManager::ObjectCompletion(ClientSession* client, ObjectIOContext* context, DWORD dwReceived)
 {
-	switch (context->type)
-	{
-	case PACKET_TYPE::OBJECT_CREATE:
-	case PACKET_TYPE::OBJECT_MOVE:
-	case PACKET_TYPE::OBJECT_COLLISION:
-	case PACKET_TYPE::OBJECT_DELETE:
-		//x 각 패킷 타입에 대한 함수를 호출한다
-		//x 반환값은 호출한 함수의 반환값으로 한다
-		return client->ObjectCommunicateCompletion(context->type);
+	return client->ObjectDataRecv(context->type);
+}
 
-	default:
-		//todo object 패킷이 아닌 경우 여기서 에러 처리
-		std::cout << "[ERROR] Packet Type " << context->type << " is not valid Object-Relative Packet Type" << std::endl;
-		return false;
-	}
+bool IOCPManager::DummyCompletion(ClientSession* client, DummyIOContext* context, DWORD dwReceived)
+{
+	return client->InitializeRecv();
 }

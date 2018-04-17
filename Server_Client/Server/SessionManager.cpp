@@ -38,7 +38,7 @@ bool SessionManager::AcceptSession()
 		++currentClientCount;
 		newClient->AddRef();
 
-		if (newClient->ConnectionAccept() == false)
+		if (newClient->AcceptClient() == false)
 			return false;
 	}
 	LeaveCriticalSection(&cs);
@@ -48,7 +48,7 @@ bool SessionManager::AcceptSession()
 void SessionManager::ReturnClientSession(ClientSession* client)
 {
 	EnterCriticalSection(&cs);
-	client->SessionReset();
+	client->ResetClientSession();
 	CList.push_back(client);
 	++returnClientCount;
 	LeaveCriticalSection(&cs);

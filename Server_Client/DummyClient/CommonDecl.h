@@ -14,13 +14,14 @@ class ClientSession;
 // 패킷의 대분류
 enum PACKET_TYPE
 {
-	CONNECT_ACCEPT,    // 첫 연결
+	CONNECT_ACCEPT = 0,  // 첫 연결
 	DISCONNECT_USER,   // 유저에 의한 접속종료
 	DISCONNECT_FORCED, // 유저가 아닌 접속종료, 보통 서버에서 클라이언트에게 상대 클라이언트의 강제종료를 알릴 때 사용함
 	OBJECT_CREATE,     // 오브젝트 생성
 	OBJECT_MOVE,       // 오브젝트 이동, 이 패킷은 주기적인 전송을 통해 pulse 역할도 함
 	OBJECT_COLLISION,  // 오브젝트 충돌
-	OBJECT_DELETE      // 오브젝트 삭제
+	OBJECT_DELETE,     // 오브젝트 삭제
+	IO_DUMMY           // IO 초기화용 더미 소켓
 };
 
 #pragma region packet struct
@@ -29,7 +30,7 @@ enum PACKET_TYPE
 #pragma pack(push,1)
 
 // 분류가 Connection - Connect 인 패킷의 WSABUF 내용
-struct ConnectAcceptContext
+struct ConnectAccept
 {
 	unsigned int userid;
 	short pattern1;
@@ -38,19 +39,19 @@ struct ConnectAcceptContext
 };
 
 // 분류가 Connection - Disconnect_User 인 패킷의 WSABUF 내용
-struct DisconnectedUserContext
+struct DisconnectedUser
 {
 	unsigned int userid;
 };
 
 // 분류가 Connection - Disconnect_Forced 인 패킷의 WSABUF 내용
-struct DisconnectedForcedContext
+struct DisconnectedForced
 {
 	unsigned int userid;
 };
 
 // 분류가 Object_Modify - Object_Create 인 패킷의 WSABUF 내용
-struct ObjectCreateContext
+struct ObjectCreate
 {
 	unsigned int objectid;
 	unsigned int userid;
@@ -60,7 +61,7 @@ struct ObjectCreateContext
 
 // 분류가 Object_Modify - Object_Move 인 패킷의 WSABUF 내용
 // 이 패킷은 정상적인 연결 확인을 위한 Pulse 의 역할도 맡음
-struct ObjectMoveContext
+struct ObjectMove
 {
 	unsigned int objectid;
 	float xpos;
@@ -68,7 +69,7 @@ struct ObjectMoveContext
 };
 
 // 분류가 Object_Modify - Object_Collision 인 패킷의 WSABUF 내용
-struct ObjectCollisionContext
+struct ObjectCollision
 {
 	unsigned int mainobjectid;
 	unsigned int subobjectid;
@@ -77,7 +78,7 @@ struct ObjectCollisionContext
 };
 
 // 분류가 Object_Modify - Object_Delete 인 패킷의 WSABUF 내용
-struct ObjectDeleteContext
+struct ObjectDelete
 {
 	unsigned int objectid;
 };
@@ -95,4 +96,19 @@ struct OverlappedIOContext
 	ClientSession*	owner;
 	PACKET_TYPE		type;
 	WSABUF			wsaBuf; // 이하의 structs 들을 담을 배열이 있는 구조체
+};
+
+struct ConnectionIOContext : public OverlappedIOContext
+{
+	ConnectionIOContext(ClientSession* client, PACKET_TYPE type);
+};
+
+struct ObjectIOContext : public OverlappedIOContext
+{
+	ObjectIOContext(ClientSession* client, PACKET_TYPE type);
+};
+
+struct DummyIOContext : public OverlappedIOContext
+{
+	DummyIOContext(ClientSession* client);
 };
